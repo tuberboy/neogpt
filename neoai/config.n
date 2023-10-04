@@ -1,0 +1,24 @@
+module neoai
+
+struct Config {
+mut:
+	dim         int
+	hidden_dim  int
+	num_layers  int
+	num_heads   int
+	num_kvheads int
+	vocab_size  int
+	seq_len     int
+}
+
+pub fn (mut c Config) head_size() int {
+	return c.dim / c.num_heads
+}
+
+pub fn (mut c Config) kvdim() int {
+	return (c.dim * c.num_kvheads) / c.num_heads
+}
+
+pub fn (mut c Config) kvmul() int {
+	return c.num_heads / c.num_kvheads
+}
