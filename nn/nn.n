@@ -1,0 +1,170 @@
+module nn
+
+import math
+import rand
+import sync
+
+const (
+    num_threads = 8
+)
+
+struct PI[T] {
+    prob  T
+    index int
+}
+
+pub fn acc(mut a []f32, b []f32) {
+    for i, _ in a {
+        a[i] += b[i]
+    }
+}
+
+pub fn rmsnorm(mut o []f32, x []f32, weight []f32) {
+    mut ss := 0.0
+    for _, v in x {
+        ss += v * v
+    }
+    ss /= f32(x.len)
+    ss += 1e-5
+    ss = f32(math.sqrt(f64(ss)))
+    for i, _ in o {
+        o[i] = f32(weight[i] * x[i] / ss)
+    }
+}
+
+pub fn soft_max(mut x[] f32) {
+    mut max := x[0]
+    for _, v in x {
+        if v > max {
+            max = v
+        }
+    }
+    mut sum := 0.0
+    for i, _ in x {
+        x[i] = f32(math.exp(f64(x[i] - max, ), ), )
+        sum += x[i]
+    }
+    for i_1, _ in x {
+        x[i_1] /= f32(sum)
+    }
+}
+
+pub fn mat_mul_unroll4(mut xout []f32, x []f32, w []f32) {
+    for i, _ in xout {
+        mut sum := 0.0
+        mut j := 0
+        for;
+        (j + 4) < x.len;
+        j += 4 {
+            sum += w[i * x.len + j] * x[j]
+            sum += w[i * x.len + j + 1] * x[j + 1]
+            sum += w[i * x.len + j + 2] * x[j + 2]
+            sum += w[i * x.len + j + 3] * x[j + 3]
+        }
+        for;
+        j < x.len;
+        j++{
+            sum += w[i * x.len + j] * x[j]
+        }
+        xout[i] = f32(sum)
+    }
+}
+
+pub fn mat_mul_parallel(mut xout []f32, x []f32, w []f32) {
+    mut n := xout.len
+    mut m := x.len
+    if n < num_threads {
+        mat_mul_unroll4(mut xout, x, w)
+        return
+    }
+    mut wg := sync.WaitGroup{}
+    wg.add(num_threads)
+    for i := 0; i < num_threads; i++ {
+        mut row_start := i * n / num_threads
+        mut row_end := (i + 1) * n / num_threads
+        if i == num_threads - 1 {
+            row_end = n
+        }
+	xout = xout[row_start..row_end].clone()
+        go mat_mul_unroll4(mut xout, x, w[m * row_start..m * row_end])
+	wg.done()
+    }
+    wg.wait()
+}
+
+pub fn mat_mul(mut xout []f32, x []f32, w []f32) {
+    mat_mul_parallel(mut xout, x, w)
+}
+
+pub fn arg_max(v []f32) int {
+    mut maxi := 0
+    mut maxv := v[0]
+    for i, _ in v {
+        if v[i] > maxv {
+            maxv = v[i]
+            maxi = i
+        }
+    }
+    return maxi
+}
+
+pub fn sample(probabilities []f32) int {
+    mut r := f32(rand.f64())
+    mut cdf := 0.0
+    for i, p in probabilities {
+        cdf += p
+        if r < cdf {
+            return i
+        }
+    }
+    return probabilities.len - 1
+}
+
+fn sort_slice[T](mut slice []T, less fn(a T, b T) bool) {
+    n := slice.len
+    for i := 0; i < n; i++ {
+        for j := 0; j < n-i-1; j++ {
+            if less(slice[j+1], slice[j]) {
+                slice[j], slice[j+1] = slice[j+1], slice[j]
+            }
+        }
+    }
+}
+
+fn custom_sort[T](a PI[T], b PI[T]) bool {
+    return a.prob > b.prob
+}
+
+pub fn sample_top_p[T](probabilities []T, topp T) int {
+    mut pis := []PI[T]{}
+
+    cutoff := (1.0 - topp) / T(probabilities.len - 1)
+    for index, p in probabilities {
+        if p >= cutoff {
+            pis << PI[T]{prob: p, index: index}
+        }
+    }
+
+    sort_slice(mut pis, custom_sort[T])
+
+    mut cumulative_prob := T(0)
+    mut last_idx := pis.len - 1
+    for index, pi in pis {
+        cumulative_prob += pi.prob
+        if cumulative_prob > topp {
+            last_idx = index
+            break
+        }
+    }
+
+    r := T(rand.f64()) * cumulative_prob
+    mut cdf := T(0)
+    for index := 0; index <= last_idx; index++ {
+        cdf += pis[index].prob
+        if r < cdf {
+            return pis[index].index
+        }
+    }
+
+    return pis[last_idx].index
+}
